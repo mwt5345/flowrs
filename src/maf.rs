@@ -21,7 +21,7 @@ impl MafConfig {
         let mut permutations = Vec::with_capacity(self.num_flows);
 
         for i in 0..self.num_flows {
-            let flow_seed = rng.gen::<u64>();
+            let flow_seed = rng.r#gen::<u64>();
             let made_config = MadeConfig::new(self.d_input, self.hidden_sizes.clone())
                 .with_seed(flow_seed);
             flows.push(made_config.init(device));
