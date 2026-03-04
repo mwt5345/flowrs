@@ -154,6 +154,46 @@ FLOW_MODEL=nsf cargo run --release --example two_moons
 
 An interactive [evcxr](https://github.com/evcxr/evcxr) Jupyter notebook is provided in [`notebooks/two_moons_nsf.ipynb`](notebooks/two_moons_nsf.ipynb), demonstrating NSF training with inline plots via [plotpy](https://github.com/cpmech/plotpy).
 
+## Benchmarks
+
+### flowrs vs nflows (Python/PyTorch)
+
+Head-to-head on the **two-moons** density estimation task (CPU, batch 512).
+Both frameworks use the same architecture per model — see [`comparison/config.toml`](comparison/config.toml) for full details.
+
+#### Throughput & latency
+
+| Model | Metric | flowrs | nflows | Speedup |
+|-------|--------|-------:|-------:|--------:|
+| **MAF** | Train (samples/sec) | 12,799 | 4,683 | **2.7x** |
+| | Forward (ms/batch) | 9.0 | 25.9 | **2.9x** |
+| | Inverse (ms/batch) | 18.9 | 54.3 | **2.9x** |
+| **NSF** | Train (samples/sec) | 17,709 | 11,804 | **1.5x** |
+| | Forward (ms/batch) | 8.4 | 13.2 | **1.6x** |
+| | Inverse (ms/batch) | 8.0 | 29.1 | **3.6x** |
+| **RealNVP** | Train (samples/sec) | 37,179 | 15,969 | **2.3x** |
+| | Forward (ms/batch) | 3.5 | 8.6 | **2.5x** |
+| | Inverse (ms/batch) | 3.3 | 14.9 | **4.5x** |
+
+#### Validation NLL (lower is better)
+
+| Model | flowrs | nflows |
+|-------|-------:|-------:|
+| MAF | **0.27** | 0.33 |
+| NSF | **-0.25** | 0.37 |
+| RealNVP | **-0.25** | 0.32 |
+
+> Measured on an ARM CPU (NdArray backend) with 100 epochs, Adam lr=5e-4.
+> Reproduce with `cd comparison && python python/benchmark_nflows.py && cd rust && cargo run --release --features ndarray --no-default-features && cd .. && python compare_results.py`.
+
+### Criterion micro-benchmarks
+
+```bash
+cargo bench --features ndarray --no-default-features
+```
+
+Benchmarks forward, inverse, and log_prob for all three architectures, plus batch-size scaling for NSF. Reports are written to `target/criterion/`.
+
 ## Architecture
 
 ```

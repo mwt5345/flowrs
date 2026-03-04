@@ -1,20 +1,30 @@
+use crate::flow::Flow;
 use crate::made::{Made, MadeConfig};
 use burn::module::Ignored;
 use burn::prelude::*;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
+/// Configuration for a Masked Autoregressive Flow.
+///
+/// A MAF stacks multiple MADE networks with alternating dimension permutations
+/// to produce an expressive, invertible normalizing flow.
 #[derive(Config, Debug)]
 pub struct MafConfig {
+    /// Dimensionality of the input data.
     pub d_input: usize,
+    /// Number of autoregressive flow steps.
     pub num_flows: usize,
+    /// Hidden layer sizes for each MADE sub-network.
     pub hidden_sizes: Vec<usize>,
+    /// Random seed for reproducible mask generation.
     #[config(default = 42)]
     pub seed: u64,
 }
 
 impl MafConfig {
     /// Build a MAF normalizing flow (stack of MADEs with alternating permutations).
+    #[must_use]
     pub fn init<B: Backend>(&self, device: &B::Device) -> Maf<B> {
         let mut rng = StdRng::seed_from_u64(self.seed);
         let mut flows = Vec::with_capacity(self.num_flows);
@@ -42,6 +52,11 @@ impl MafConfig {
     }
 }
 
+/// Masked Autoregressive Flow.
+///
+/// Combines multiple MADE (Masked Autoencoder for Distribution Estimation) networks
+/// with alternating permutations to model complex probability distributions.
+/// The forward pass is parallel (fast), while the inverse pass is sequential.
 #[derive(Module, Debug)]
 pub struct Maf<B: Backend> {
     pub(crate) flows: Vec<Made<B>>,
@@ -51,7 +66,7 @@ pub struct Maf<B: Backend> {
 }
 
 impl<B: Backend> Maf<B> {
-    /// Apply permutation to tensor columns
+    /// Apply permutation to tensor columns.
     fn permute_cols(&self, x: Tensor<B, 2>, perm: &Option<Vec<usize>>) -> Tensor<B, 2> {
         match perm {
             None => x,
@@ -63,7 +78,7 @@ impl<B: Backend> Maf<B> {
         }
     }
 
-    /// Inverse permutation
+    /// Inverse permutation.
     fn inv_permute_cols(&self, x: Tensor<B, 2>, perm: &Option<Vec<usize>>) -> Tensor<B, 2> {
         match perm {
             None => x,
@@ -79,8 +94,10 @@ impl<B: Backend> Maf<B> {
         }
     }
 
-    /// Forward: x -> z (fast, parallel)
-    /// Returns (z, log_det_jacobian \[batch\])
+    /// Forward: x -> z (fast, parallel).
+    ///
+    /// Returns `(z, log_det_jacobian)` where `log_det_jacobian` has shape `[batch]`.
+    #[must_use]
     pub fn forward(&self, x: Tensor<B, 2>) -> (Tensor<B, 2>, Tensor<B, 1>) {
         let batch = x.dims()[0];
         let device = x.device();
@@ -99,15 +116,16 @@ impl<B: Backend> Maf<B> {
             // z_i = (x_i - mu_i) * exp(-log_sigma_i)
             z = (z - mu) * (-log_sigma.clone()).exp();
 
-            // log_det = -sum(log_sigma) per sample -> [batch, 1] -> squeeze to [batch]
-            let log_det: Tensor<B, 1> = log_sigma.sum_dim(1).squeeze();
+            // log_det = -sum(log_sigma) per sample
+            let log_det: Tensor<B, 1> = log_sigma.sum_dim(1).reshape([batch]);
             total_log_det = total_log_det - log_det;
         }
 
         (z, total_log_det)
     }
 
-    /// Inverse: z -> x (sequential, for sampling)
+    /// Inverse: z -> x (sequential, for sampling).
+    #[must_use]
     pub fn inverse(&self, z: Tensor<B, 2>) -> Tensor<B, 2> {
         let d = self.d_input;
         let batch = z.dims()[0];
@@ -161,10 +179,23 @@ impl<B: Backend> Maf<B> {
         x
     }
 
-    /// Compute log p(x) = log N(z; 0, I) + log_det_jacobian
+    /// Compute `log p(x) = log N(z; 0, I) + log_det_jacobian`.
+    #[must_use]
     pub fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1> {
         let (z, log_det) = self.forward(x);
         crate::flow::standard_normal_log_prob(z, log_det)
+    }
+}
+
+impl<B: Backend> Flow<B> for Maf<B> {
+    fn forward(&self, x: Tensor<B, 2>) -> (Tensor<B, 2>, Tensor<B, 1>) {
+        self.forward(x)
+    }
+    fn inverse(&self, z: Tensor<B, 2>) -> Tensor<B, 2> {
+        self.inverse(z)
+    }
+    fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1> {
+        self.log_prob(x)
     }
 }
 
@@ -202,5 +233,21 @@ mod tests {
         );
         let lp = model.log_prob(x);
         assert_eq!(lp.dims(), [8]);
+    }
+
+    #[test]
+    fn batch_1_no_panic() {
+        let device = Default::default();
+        let model = MafConfig::new(2, 2, vec![16, 16]).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [1, 2],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (z, log_det) = model.forward(x.clone());
+        assert_eq!(z.dims(), [1, 2]);
+        assert_eq!(log_det.dims(), [1]);
+        let lp = model.log_prob(x);
+        assert_eq!(lp.dims(), [1]);
     }
 }

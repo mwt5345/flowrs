@@ -5,15 +5,25 @@ use burn::prelude::*;
 
 // ──────────────────────────── Affine Coupling ────────────────────────────
 
+/// Configuration for an affine coupling layer.
+///
+/// Splits the input into identity and transform parts; the identity part
+/// conditions an MLP that outputs scale and shift parameters for the
+/// transform part.
 #[derive(Config, Debug)]
 pub struct AffineCouplingConfig {
+    /// Dimensionality of the input.
     pub d_input: usize,
+    /// Hidden layer sizes for the conditioner MLP.
     pub hidden_sizes: Vec<usize>,
+    /// If `true`, the first half of dimensions is the identity part.
     #[config(default = true)]
     pub mask_even: bool,
 }
 
 impl AffineCouplingConfig {
+    /// Build an affine coupling layer.
+    #[must_use]
     pub fn init<B: Backend>(&self, device: &B::Device) -> AffineCoupling<B> {
         let d_identity = self.d_input / 2;
         let d_transform = self.d_input - d_identity;
@@ -31,6 +41,10 @@ impl AffineCouplingConfig {
     }
 }
 
+/// Affine coupling layer.
+///
+/// Applies `y_tr = x_tr * exp(log_scale) + shift` to the transform part while
+/// leaving the identity part unchanged. Efficient and analytically invertible.
 #[derive(Module, Debug)]
 pub struct AffineCoupling<B: Backend> {
     pub(crate) conditioner: Mlp<B>,
@@ -65,9 +79,12 @@ impl<B: Backend> AffineCoupling<B> {
         }
     }
 
-    /// Forward: y_tr = x_tr * exp(log_scale) + shift, y_id = x_id
-    /// Returns (y, log_det \[batch\])
+    /// Forward: `y_tr = x_tr * exp(log_scale) + shift`, `y_id = x_id`.
+    ///
+    /// Returns `(y, log_det)` where `log_det` has shape `[batch]`.
+    #[must_use]
     pub fn forward(&self, x: Tensor<B, 2>) -> (Tensor<B, 2>, Tensor<B, 1>) {
+        let batch = x.dims()[0];
         let (x_id, x_tr) = self.split(x);
 
         let params = self.conditioner.forward(x_id.clone()); // [B, 2*d_transform]
@@ -78,12 +95,13 @@ impl<B: Backend> AffineCoupling<B> {
         let shift = params.narrow(1, self.d_transform, self.d_transform);
 
         let y_tr = x_tr * log_scale.clone().exp() + shift;
-        let log_det: Tensor<B, 1> = log_scale.sum_dim(1).squeeze();
+        let log_det: Tensor<B, 1> = log_scale.sum_dim(1).reshape([batch]);
 
         (self.merge(x_id, y_tr), log_det)
     }
 
-    /// Inverse: x_tr = (y_tr - shift) * exp(-log_scale)
+    /// Inverse: `x_tr = (y_tr - shift) * exp(-log_scale)`.
+    #[must_use]
     pub fn inverse(&self, y: Tensor<B, 2>) -> Tensor<B, 2> {
         let (y_id, y_tr) = self.split(y);
 
@@ -102,19 +120,30 @@ impl<B: Backend> AffineCoupling<B> {
 
 // ──────────────────────────── Spline Coupling ────────────────────────────
 
+/// Configuration for a rational-quadratic spline coupling layer.
+///
+/// Uses a conditioner MLP to produce spline parameters (bin widths, heights,
+/// and interior derivatives) for the transform dimensions.
 #[derive(Config, Debug)]
 pub struct SplineCouplingConfig {
+    /// Dimensionality of the input.
     pub d_input: usize,
+    /// Hidden layer sizes for the conditioner MLP.
     pub hidden_sizes: Vec<usize>,
+    /// Number of spline bins.
     #[config(default = 8)]
     pub num_bins: usize,
+    /// Boundary beyond which the spline acts as the identity.
     #[config(default = 3.0)]
     pub tail_bound: f32,
+    /// If `true`, the first half of dimensions is the identity part.
     #[config(default = true)]
     pub mask_even: bool,
 }
 
 impl SplineCouplingConfig {
+    /// Build a spline coupling layer.
+    #[must_use]
     pub fn init<B: Backend>(&self, device: &B::Device) -> SplineCoupling<B> {
         let d_identity = self.d_input / 2;
         let d_transform = self.d_input - d_identity;
@@ -140,6 +169,10 @@ impl SplineCouplingConfig {
     }
 }
 
+/// Rational-quadratic spline coupling layer.
+///
+/// More expressive than affine coupling thanks to monotonic rational-quadratic
+/// spline transforms, at the cost of additional computation.
 #[derive(Module, Debug)]
 pub struct SplineCoupling<B: Backend> {
     pub(crate) conditioner: Mlp<B>,
@@ -173,7 +206,9 @@ impl<B: Backend> SplineCoupling<B> {
     }
 
     /// Parse conditioner output into spline parameters.
-    /// Returns (widths [B, D_tr, K], heights [B, D_tr, K], derivs [B, D_tr, K-1])
+    ///
+    /// Returns `(widths, heights, derivs)` with shapes
+    /// `[B, D_tr, K]`, `[B, D_tr, K]`, `[B, D_tr, K-1]`.
     fn parse_params(&self, raw: Tensor<B, 2>) -> (Tensor<B, 3>, Tensor<B, 3>, Tensor<B, 3>) {
         let batch = raw.dims()[0];
         let k = self.num_bins;
@@ -189,8 +224,12 @@ impl<B: Backend> SplineCoupling<B> {
         (widths, heights, derivs)
     }
 
-    /// Forward pass through spline coupling.
+    /// Forward pass through the spline coupling layer.
+    ///
+    /// Returns `(y, log_det)` where `log_det` has shape `[batch]`.
+    #[must_use]
     pub fn forward(&self, x: Tensor<B, 2>) -> (Tensor<B, 2>, Tensor<B, 1>) {
+        let batch = x.dims()[0];
         let (x_id, x_tr) = self.split(x);
 
         let raw = self.conditioner.forward(x_id.clone());
@@ -198,12 +237,13 @@ impl<B: Backend> SplineCoupling<B> {
 
         let (y_tr, logdet_2d) =
             spline::rqs_forward(x_tr, widths, heights, derivs, *self.tail_bound);
-        let log_det: Tensor<B, 1> = logdet_2d.sum_dim(1).squeeze(); // sum over D_tr
+        let log_det: Tensor<B, 1> = logdet_2d.sum_dim(1).reshape([batch]); // sum over D_tr
 
         (self.merge(x_id, y_tr), log_det)
     }
 
-    /// Inverse pass through spline coupling.
+    /// Inverse pass through the spline coupling layer.
+    #[must_use]
     pub fn inverse(&self, y: Tensor<B, 2>) -> Tensor<B, 2> {
         let (y_id, y_tr) = self.split(y);
 
@@ -253,6 +293,24 @@ mod tests {
     }
 
     #[test]
+    fn affine_batch_1() {
+        let device = Default::default();
+        let model = AffineCouplingConfig::new(4, vec![16, 16]).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [1, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (y, log_det) = model.forward(x.clone());
+        assert_eq!(y.dims(), [1, 4]);
+        assert_eq!(log_det.dims(), [1]);
+        let x_rec = model.inverse(y);
+        let diff: Vec<f32> = (x - x_rec).to_data().to_vec().unwrap();
+        let max_diff = diff.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+        assert!(max_diff < 1e-5, "max diff: {max_diff}");
+    }
+
+    #[test]
     fn spline_forward_inverse_roundtrip() {
         let device = Default::default();
         let model = SplineCouplingConfig::new(4, vec![16, 16]).init::<B>(&device);
@@ -279,5 +337,23 @@ mod tests {
         );
         let (_, log_det) = model.forward(x);
         assert_eq!(log_det.dims(), [8]);
+    }
+
+    #[test]
+    fn spline_batch_1() {
+        let device = Default::default();
+        let model = SplineCouplingConfig::new(4, vec![16, 16]).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [1, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (y, log_det) = model.forward(x.clone());
+        assert_eq!(y.dims(), [1, 4]);
+        assert_eq!(log_det.dims(), [1]);
+        let x_rec = model.inverse(y);
+        let diff: Vec<f32> = (x - x_rec).to_data().to_vec().unwrap();
+        let max_diff = diff.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+        assert!(max_diff < 1e-3, "max diff: {max_diff}");
     }
 }

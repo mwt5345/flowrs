@@ -18,3 +18,8 @@ rand_distr = "0.4"
 env_logger = "0.11"
 log = "0.4"
 plotpy = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "flows"
+harness = false

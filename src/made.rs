@@ -4,16 +4,24 @@ use burn::tensor::activation;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
+/// Configuration for a MADE (Masked Autoencoder for Distribution Estimation) network.
 #[derive(Config, Debug)]
 pub struct MadeConfig {
+    /// Dimensionality of the input.
     pub d_input: usize,
+    /// Hidden layer sizes.
     pub hidden_sizes: Vec<usize>,
+    /// Random seed for mask generation.
     #[config(default = 42)]
     pub seed: u64,
 }
 
 impl MadeConfig {
     /// Build a MADE network with autoregressive masks.
+    ///
+    /// Output `i` depends only on inputs `0..i`, enforced by binary masks on
+    /// the weight matrices.
+    #[must_use]
     pub fn init<B: Backend>(&self, device: &B::Device) -> Made<B> {
         let d = self.d_input;
         let mut rng = StdRng::seed_from_u64(self.seed);
@@ -70,6 +78,11 @@ impl MadeConfig {
     }
 }
 
+/// MADE (Masked Autoencoder for Distribution Estimation).
+///
+/// An autoregressive network where output dimension `i` depends only on
+/// input dimensions `0..i`, enforced by masked weight matrices. Returns
+/// `(mu, log_sigma)` for use in autoregressive flows.
 #[derive(Module, Debug)]
 pub struct Made<B: Backend> {
     pub(crate) layers: Vec<MaskedLinear<B>>,
@@ -77,7 +90,8 @@ pub struct Made<B: Backend> {
 }
 
 impl<B: Backend> Made<B> {
-    /// Forward pass: returns (mu, log_sigma) each [batch, d]
+    /// Forward pass: returns `(mu, log_sigma)` each with shape `[batch, d]`.
+    #[must_use]
     pub fn forward(&self, x: Tensor<B, 2>) -> (Tensor<B, 2>, Tensor<B, 2>) {
         let num_layers = self.layers.len();
         let mut h = x;

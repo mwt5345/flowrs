@@ -1,0 +1,29 @@
+# Shared architecture and training configuration for flowrs vs nflows comparison.
+# Both the Rust and Python benchmarks read this file to ensure parity.
+
+[training]
+batch_size = 512
+num_epochs = 100
+batches_per_epoch = 20
+learning_rate = 5e-4
+seed = 42
+n_train = 24000
+n_val = 6000
+
+[data]
+dataset = "two_moons"
+noise = 0.05
+
+[maf]
+num_layers = 10
+hidden_sizes = [256, 256]
+
+[nsf]
+num_layers = 8
+hidden_sizes = [128, 128]
+num_bins = 8
+tail_bound = 3.0
+
+[realnvp]
+num_layers = 8
+hidden_sizes = [128, 128]

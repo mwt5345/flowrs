@@ -9,7 +9,7 @@ use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use std::path::Path;
 
-use flowrs::{Maf, MafConfig, Nsf, NsfConfig, RealNvp, RealNvpConfig};
+use flowrs::{Flow, MafConfig, NsfConfig, RealNvpConfig};
 
 mod data;
 mod viz;
@@ -22,39 +22,6 @@ enum FlowModel {
     Maf,
     Nsf,
     RealNvp,
-}
-
-/// Trait to unify flow models for the training loop.
-trait Flow<B: Backend>: Sized {
-    fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1>;
-    fn inverse(&self, z: Tensor<B, 2>) -> Tensor<B, 2>;
-}
-
-impl<B: Backend> Flow<B> for Maf<B> {
-    fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1> {
-        self.log_prob(x)
-    }
-    fn inverse(&self, z: Tensor<B, 2>) -> Tensor<B, 2> {
-        self.inverse(z)
-    }
-}
-
-impl<B: Backend> Flow<B> for Nsf<B> {
-    fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1> {
-        self.log_prob(x)
-    }
-    fn inverse(&self, z: Tensor<B, 2>) -> Tensor<B, 2> {
-        self.inverse(z)
-    }
-}
-
-impl<B: Backend> Flow<B> for RealNvp<B> {
-    fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1> {
-        self.log_prob(x)
-    }
-    fn inverse(&self, z: Tensor<B, 2>) -> Tensor<B, 2> {
-        self.inverse(z)
-    }
 }
 
 /// Evaluate log_prob on a 2D grid and return density values.

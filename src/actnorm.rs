@@ -1,12 +1,16 @@
 use burn::module::Param;
 use burn::prelude::*;
 
+/// Configuration for an activation normalization layer.
 #[derive(Config, Debug)]
 pub struct ActNormConfig {
+    /// Number of features (channels) to normalize.
     pub features: usize,
 }
 
 impl ActNormConfig {
+    /// Build an activation normalization layer initialized to the identity transform.
+    #[must_use]
     pub fn init<B: Backend>(&self, device: &B::Device) -> ActNorm<B> {
         let log_scale = Tensor::zeros([self.features], device);
         let shift = Tensor::zeros([self.features], device);
@@ -18,6 +22,10 @@ impl ActNormConfig {
     }
 }
 
+/// Activation normalization layer.
+///
+/// Learnable per-feature affine transformation: `y = x * exp(log_scale) + shift`.
+/// Commonly used in normalizing flows to stabilize training.
 #[derive(Module, Debug)]
 pub struct ActNorm<B: Backend> {
     pub(crate) log_scale: Param<Tensor<B, 1>>,
@@ -26,8 +34,10 @@ pub struct ActNorm<B: Backend> {
 }
 
 impl<B: Backend> ActNorm<B> {
-    /// Forward: y = x * exp(log_scale) + shift
-    /// Returns (y, log_det) where log_det has shape \[batch\].
+    /// Forward: `y = x * exp(log_scale) + shift`.
+    ///
+    /// Returns `(y, log_det)` where `log_det` has shape `[batch]`.
+    #[must_use]
     pub fn forward(&self, x: Tensor<B, 2>) -> (Tensor<B, 2>, Tensor<B, 1>) {
         let batch = x.dims()[0];
         let device = x.device();
@@ -43,7 +53,8 @@ impl<B: Backend> ActNorm<B> {
         (y, log_det)
     }
 
-    /// Inverse: x = (y - shift) * exp(-log_scale)
+    /// Inverse: `x = (y - shift) * exp(-log_scale)`.
+    #[must_use]
     pub fn inverse(&self, y: Tensor<B, 2>) -> Tensor<B, 2> {
         let shift = self.shift.val().unsqueeze_dim(0);
         let neg_log_scale = self.log_scale.val().neg().unsqueeze_dim(0);

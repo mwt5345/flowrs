@@ -1,0 +1,18 @@
+[package]
+name = "flowrs-benchmark"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["wgpu"]
+wgpu = ["flowrs/wgpu"]
+cuda = ["flowrs/cuda"]
+ndarray = ["flowrs/ndarray"]
+
+[dependencies]
+flowrs = { path = "../.." }
+burn = { version = "0.20", features = ["autodiff"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"

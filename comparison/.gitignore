@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+python_results.json
+rust_results.json

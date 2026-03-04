@@ -1,12 +1,16 @@
 use burn::module::Param;
 use burn::prelude::*;
 
+/// Configuration for an LU-decomposed invertible linear layer.
 #[derive(Config, Debug)]
 pub struct LULinearConfig {
+    /// Number of input/output features.
     pub features: usize,
 }
 
 impl LULinearConfig {
+    /// Build an LU-decomposed linear layer initialized to the identity transform.
+    #[must_use]
     pub fn init<B: Backend>(&self, device: &B::Device) -> LULinear<B> {
         let d = self.features;
 
@@ -33,6 +37,11 @@ impl LULinearConfig {
     }
 }
 
+/// LU-decomposed invertible linear layer.
+///
+/// Parameterizes `W = L @ U` where `L` is unit lower triangular and `U` is
+/// upper triangular with a positive diagonal (via softplus). This guarantees
+/// invertibility and provides an efficient log-determinant computation.
 #[derive(Module, Debug)]
 pub struct LULinear<B: Backend> {
     pub(crate) lower_entries: Param<Tensor<B, 1>>,
@@ -43,7 +52,7 @@ pub struct LULinear<B: Backend> {
 }
 
 impl<B: Backend> LULinear<B> {
-    /// Assemble the weight matrix W = L @ U where L is unit lower triangular
+    /// Assemble the weight matrix `W = L @ U` where L is unit lower triangular
     /// and U is upper triangular with positive diagonal (via softplus).
     fn assemble_w(&self) -> Tensor<B, 2> {
         let d = self.features;
@@ -101,8 +110,10 @@ impl<B: Backend> LULinear<B> {
         l_mat.matmul(u_mat)
     }
 
-    /// Forward: y = x @ W^T + bias
-    /// Returns (y, log_det) where log_det = sum(log(softplus(log_upper_diag)))
+    /// Forward: `y = x @ W^T + bias`.
+    ///
+    /// Returns `(y, log_det)` where `log_det = sum(log(softplus(log_upper_diag)))`.
+    #[must_use]
     pub fn forward(&self, x: Tensor<B, 2>) -> (Tensor<B, 2>, Tensor<B, 1>) {
         let batch = x.dims()[0];
         let device = x.device();
@@ -118,8 +129,10 @@ impl<B: Backend> LULinear<B> {
         (y, log_det)
     }
 
-    /// Inverse: x = (y - bias) @ W^{-T}
-    /// Computes W then inverts via Gauss-Jordan (suitable for small D).
+    /// Inverse: `x = (y - bias) @ W^{-T}`.
+    ///
+    /// Computes `W` then inverts via Gauss-Jordan (suitable for small `D`).
+    #[must_use]
     pub fn inverse(&self, y: Tensor<B, 2>) -> Tensor<B, 2> {
         let d = self.features;
         let device = y.device();

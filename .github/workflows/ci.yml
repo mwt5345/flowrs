@@ -16,3 +16,7 @@ jobs:
         run: cargo clippy --features ndarray --no-default-features -- -D warnings
       - name: Format check
         run: cargo fmt --check
+      - name: Doc build
+        run: cargo doc --features ndarray --no-default-features --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"

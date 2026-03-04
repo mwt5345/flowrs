@@ -4,14 +4,15 @@ use burn::tensor::activation;
 /// Rational Quadratic Spline forward transform.
 ///
 /// # Arguments
-/// * `inputs` - [B, D] tensor of input values
-/// * `unnorm_widths` - [B, D, K] unnormalized bin widths
-/// * `unnorm_heights` - [B, D, K] unnormalized bin heights
-/// * `unnorm_derivs` - [B, D, K-1] unnormalized interior derivatives
-/// * `tail_bound` - scalar; identity outside [-tail_bound, tail_bound]
+/// * `inputs` - `[B, D]` tensor of input values
+/// * `unnorm_widths` - `[B, D, K]` unnormalized bin widths
+/// * `unnorm_heights` - `[B, D, K]` unnormalized bin heights
+/// * `unnorm_derivs` - `[B, D, K-1]` unnormalized interior derivatives
+/// * `tail_bound` - scalar; identity outside `[-tail_bound, tail_bound]`
 ///
 /// # Returns
-/// (outputs [B, D], log_abs_det [B, D])
+/// `(outputs [B, D], log_abs_det [B, D])`
+#[must_use]
 pub fn rqs_forward<B: Backend>(
     inputs: Tensor<B, 2>,
     unnorm_widths: Tensor<B, 3>,
@@ -30,6 +31,17 @@ pub fn rqs_forward<B: Backend>(
 }
 
 /// Rational Quadratic Spline inverse transform.
+///
+/// # Arguments
+/// * `inputs` - `[B, D]` tensor of values in the transformed space
+/// * `unnorm_widths` - `[B, D, K]` unnormalized bin widths
+/// * `unnorm_heights` - `[B, D, K]` unnormalized bin heights
+/// * `unnorm_derivs` - `[B, D, K-1]` unnormalized interior derivatives
+/// * `tail_bound` - scalar; identity outside `[-tail_bound, tail_bound]`
+///
+/// # Returns
+/// `(outputs [B, D], log_abs_det [B, D])`
+#[must_use]
 pub fn rqs_inverse<B: Backend>(
     inputs: Tensor<B, 2>,
     unnorm_widths: Tensor<B, 3>,
