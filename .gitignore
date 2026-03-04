@@ -1,0 +1,14 @@
+/target
+Cargo.lock
+
+# plotpy generated files
+*.svg
+*.csv
+*.py
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Claude Code
+.claude/
