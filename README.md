@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/flowrs-logo.png" alt="flowrs logo" width="280"/>
+  <img src="assets/flowrs-logo.png" alt="flowrs logo" width="140"/>
 </p>
 
 <h1 align="center">flowrs</h1>
