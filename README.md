@@ -1,8 +1,7 @@
 <p align="center">
-  <img src="assets/flowrs-logo.png" alt="flowrs logo" width="140"/>
+  <img src="assets/flowrs-logo.png?raw=true" alt="flowrs logo" width="140"/>
 </p>
 
-<h1 align="center">flowrs</h1>
 
 <p align="center">
   Normalizing flows in Rust, built on <a href="https://burn.dev">Burn</a>.
