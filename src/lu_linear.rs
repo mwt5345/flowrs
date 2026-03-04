@@ -1,5 +1,5 @@
-use burn::prelude::*;
 use burn::module::Param;
+use burn::prelude::*;
 
 #[derive(Config, Debug)]
 pub struct LULinearConfig {
@@ -151,9 +151,7 @@ impl<B: Backend> LULinear<B> {
             // Swap rows
             if pivot_row != col {
                 for k in 0..(2 * d) {
-                    let tmp = aug[col * 2 * d + k];
-                    aug[col * 2 * d + k] = aug[pivot_row * 2 * d + k];
-                    aug[pivot_row * 2 * d + k] = tmp;
+                    aug.swap(col * 2 * d + k, pivot_row * 2 * d + k);
                 }
             }
             // Scale pivot row
@@ -185,5 +183,57 @@ impl<B: Backend> LULinear<B> {
         // x = (y - bias) @ W^{-T}
         let x = y - self.bias.val().unsqueeze_dim(0);
         x.matmul(w_inv.transpose())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn::backend::NdArray;
+
+    type B = NdArray;
+
+    #[test]
+    fn forward_inverse_roundtrip() {
+        let device = Default::default();
+        let model = LULinearConfig::new(4).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [8, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (y, _) = model.forward(x.clone());
+        let x_rec = model.inverse(y);
+        let diff: Vec<f32> = (x - x_rec).to_data().to_vec().unwrap();
+        let max_diff = diff.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+        assert!(max_diff < 1e-4, "max diff: {max_diff}");
+    }
+
+    #[test]
+    fn log_det_shape() {
+        let device = Default::default();
+        let model = LULinearConfig::new(4).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [8, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (_, log_det) = model.forward(x);
+        assert_eq!(log_det.dims(), [8]);
+    }
+
+    #[test]
+    fn w_is_invertible() {
+        let device = Default::default();
+        let model = LULinearConfig::new(4).init::<B>(&device);
+        let w = model.assemble_w();
+        let w_data: Vec<f32> = w.to_data().to_vec().unwrap();
+        let d = 4;
+        for i in 0..d {
+            assert!(
+                w_data[i * d + i].abs() > 1e-6,
+                "diagonal element {i} is too small"
+            );
+        }
     }
 }

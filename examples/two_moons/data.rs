@@ -1,7 +1,7 @@
 use burn::prelude::*;
+use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
-use rand::SeedableRng;
 use rand_distr::{Distribution, Normal, Uniform};
 
 #[derive(Clone, Copy, Debug)]
@@ -58,10 +58,7 @@ pub fn sample_batch<B: Backend>(
     device: &B::Device,
     rng: &mut StdRng,
 ) -> Tensor<B, 2> {
-    let chosen: Vec<[f32; 2]> = points
-        .choose_multiple(rng, batch_size)
-        .cloned()
-        .collect();
+    let chosen: Vec<[f32; 2]> = points.choose_multiple(rng, batch_size).cloned().collect();
     let flat: Vec<f32> = chosen.iter().flat_map(|p| p.iter().copied()).collect();
     Tensor::from_floats(TensorData::new(flat, [batch_size, 2]), device)
 }

@@ -1,12 +1,12 @@
 #![recursion_limit = "8192"]
 
-use burn::prelude::*;
 use burn::module::AutodiffModule;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
+use burn::prelude::*;
 use burn::tensor::backend::AutodiffBackend;
+use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
-use rand::SeedableRng;
 use std::path::Path;
 
 use flowrs::{Maf, MafConfig, Nsf, NsfConfig, RealNvp, RealNvpConfig};
@@ -14,7 +14,7 @@ use flowrs::{Maf, MafConfig, Nsf, NsfConfig, RealNvp, RealNvpConfig};
 mod data;
 mod viz;
 
-use data::{generate_dataset, sample_batch, ToyDataset};
+use data::{ToyDataset, generate_dataset, sample_batch};
 use viz::{contour_svg, scatter_svg, tensor_to_points, write_csv};
 
 #[derive(Clone, Copy, Debug)]
@@ -31,18 +31,30 @@ trait Flow<B: Backend>: Sized {
 }
 
 impl<B: Backend> Flow<B> for Maf<B> {
-    fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1> { self.log_prob(x) }
-    fn inverse(&self, z: Tensor<B, 2>) -> Tensor<B, 2> { self.inverse(z) }
+    fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1> {
+        self.log_prob(x)
+    }
+    fn inverse(&self, z: Tensor<B, 2>) -> Tensor<B, 2> {
+        self.inverse(z)
+    }
 }
 
 impl<B: Backend> Flow<B> for Nsf<B> {
-    fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1> { self.log_prob(x) }
-    fn inverse(&self, z: Tensor<B, 2>) -> Tensor<B, 2> { self.inverse(z) }
+    fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1> {
+        self.log_prob(x)
+    }
+    fn inverse(&self, z: Tensor<B, 2>) -> Tensor<B, 2> {
+        self.inverse(z)
+    }
 }
 
 impl<B: Backend> Flow<B> for RealNvp<B> {
-    fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1> { self.log_prob(x) }
-    fn inverse(&self, z: Tensor<B, 2>) -> Tensor<B, 2> { self.inverse(z) }
+    fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1> {
+        self.log_prob(x)
+    }
+    fn inverse(&self, z: Tensor<B, 2>) -> Tensor<B, 2> {
+        self.inverse(z)
+    }
 }
 
 /// Evaluate log_prob on a 2D grid and return density values.
@@ -72,10 +84,7 @@ fn eval_density_grid<B: Backend>(
         let end = (start + chunk_size).min(n);
         let batch_len = end - start;
         let flat: Vec<f32> = grid_points[start * 2..end * 2].to_vec();
-        let tensor = Tensor::<B, 2>::from_floats(
-            TensorData::new(flat, [batch_len, 2]),
-            device,
-        );
+        let tensor = Tensor::<B, 2>::from_floats(TensorData::new(flat, [batch_len, 2]), device);
         let log_probs = model.log_prob(tensor);
         let data = log_probs.to_data();
         let lp: Vec<f32> = data.to_vec().unwrap();
@@ -119,18 +128,30 @@ fn visualize<B: Backend>(
     let density = eval_density_grid(model, grid_res, grid_res, bounds, device);
 
     let svg_contour = contour_svg(
-        &density, grid_res, grid_res, bounds, 800, 600,
+        &density,
+        grid_res,
+        grid_res,
+        bounds,
+        800,
+        600,
         &format!("{} Density", title),
         Some(all_data),
     );
-    std::fs::write(format!("{}_density.svg", prefix), &svg_contour).expect("Failed to write density SVG");
+    std::fs::write(format!("{}_density.svg", prefix), &svg_contour)
+        .expect("Failed to write density SVG");
 
     let svg_clean = contour_svg(
-        &density, grid_res, grid_res, bounds, 800, 600,
+        &density,
+        grid_res,
+        grid_res,
+        bounds,
+        800,
+        600,
         &format!("{} Density", title),
         None,
     );
-    std::fs::write(format!("{}_density_clean.svg", prefix), &svg_clean).expect("Failed to write clean density SVG");
+    std::fs::write(format!("{}_density_clean.svg", prefix), &svg_clean)
+        .expect("Failed to write clean density SVG");
 
     println!("  {}_samples.csv / .svg", prefix);
     println!("  {}_density.svg / {}_density_clean.svg", prefix, prefix);
@@ -184,7 +205,10 @@ fn train_flow<B: AutodiffBackend, M>(
         if epoch % eval_every == 0 || epoch == 1 {
             let model_valid = model.valid();
             let val_batch = sample_batch::<<B as AutodiffBackend>::InnerBackend>(
-                val_data, val_data.len().min(2048), device, rng,
+                val_data,
+                val_data.len().min(2048),
+                device,
+                rng,
             );
             let val_log_prob = model_valid.log_prob(val_batch);
             let val_nll: f32 = (-val_log_prob.mean()).into_scalar().elem();
@@ -225,7 +249,11 @@ fn train<B: AutodiffBackend>(device: B::Device) {
     let n_train = (n_data as f32 * 0.8) as usize;
     let train_data = &all_data[..n_train];
     let val_data = &all_data[n_train..];
-    println!("Dataset: {} train, {} val", train_data.len(), val_data.len());
+    println!(
+        "Dataset: {} train, {} val",
+        train_data.len(),
+        val_data.len()
+    );
 
     // Determine which model(s) to train from FLOW_MODEL env var
     let flow_models: Vec<FlowModel> = match std::env::var("FLOW_MODEL").as_deref() {
@@ -246,8 +274,16 @@ fn train<B: AutodiffBackend>(device: B::Device) {
                 let config = MafConfig::new(2, 10, vec![256, 256]).with_seed(seed);
                 let model = config.init::<B>(&device);
                 train_flow::<B, _>(
-                    model, train_data, val_data, &all_data, &device, &mut model_rng,
-                    "maf", "MAF (Two Moons)", 2000, 5e-4,
+                    model,
+                    train_data,
+                    val_data,
+                    &all_data,
+                    &device,
+                    &mut model_rng,
+                    "maf",
+                    "MAF (Two Moons)",
+                    2000,
+                    5e-4,
                 );
             }
             FlowModel::Nsf => {
@@ -256,16 +292,32 @@ fn train<B: AutodiffBackend>(device: B::Device) {
                     .with_tail_bound(3.0);
                 let model = config.init::<B>(&device);
                 train_flow::<B, _>(
-                    model, train_data, val_data, &all_data, &device, &mut model_rng,
-                    "nsf", "NSF (Two Moons)", 2000, 5e-4,
+                    model,
+                    train_data,
+                    val_data,
+                    &all_data,
+                    &device,
+                    &mut model_rng,
+                    "nsf",
+                    "NSF (Two Moons)",
+                    2000,
+                    5e-4,
                 );
             }
             FlowModel::RealNvp => {
                 let config = RealNvpConfig::new(2, 8, vec![128, 128]);
                 let model = config.init::<B>(&device);
                 train_flow::<B, _>(
-                    model, train_data, val_data, &all_data, &device, &mut model_rng,
-                    "realnvp", "RealNVP (Two Moons)", 2000, 5e-4,
+                    model,
+                    train_data,
+                    val_data,
+                    &all_data,
+                    &device,
+                    &mut model_rng,
+                    "realnvp",
+                    "RealNVP (Two Moons)",
+                    2000,
+                    5e-4,
                 );
             }
         }

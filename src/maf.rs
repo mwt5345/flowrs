@@ -1,6 +1,6 @@
-use burn::prelude::*;
-use burn::module::Ignored;
 use crate::made::{Made, MadeConfig};
+use burn::module::Ignored;
+use burn::prelude::*;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -22,8 +22,8 @@ impl MafConfig {
 
         for i in 0..self.num_flows {
             let flow_seed = rng.r#gen::<u64>();
-            let made_config = MadeConfig::new(self.d_input, self.hidden_sizes.clone())
-                .with_seed(flow_seed);
+            let made_config =
+                MadeConfig::new(self.d_input, self.hidden_sizes.clone()).with_seed(flow_seed);
             flows.push(made_config.init(device));
 
             if i % 2 == 0 {
@@ -56,10 +56,8 @@ impl<B: Backend> Maf<B> {
         match perm {
             None => x,
             Some(indices) => {
-                let cols: Vec<Tensor<B, 2>> = indices
-                    .iter()
-                    .map(|&i| x.clone().narrow(1, i, 1))
-                    .collect();
+                let cols: Vec<Tensor<B, 2>> =
+                    indices.iter().map(|&i| x.clone().narrow(1, i, 1)).collect();
                 Tensor::cat(cols, 1)
             }
         }
@@ -74,10 +72,8 @@ impl<B: Backend> Maf<B> {
                 for (i, &j) in indices.iter().enumerate() {
                     inv[j] = i;
                 }
-                let cols: Vec<Tensor<B, 2>> = inv
-                    .iter()
-                    .map(|&i| x.clone().narrow(1, i, 1))
-                    .collect();
+                let cols: Vec<Tensor<B, 2>> =
+                    inv.iter().map(|&i| x.clone().narrow(1, i, 1)).collect();
                 Tensor::cat(cols, 1)
             }
         }
@@ -169,5 +165,42 @@ impl<B: Backend> Maf<B> {
     pub fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1> {
         let (z, log_det) = self.forward(x);
         crate::flow::standard_normal_log_prob(z, log_det)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn::backend::NdArray;
+
+    type B = NdArray;
+
+    #[test]
+    fn forward_inverse_roundtrip() {
+        let device = Default::default();
+        let model = MafConfig::new(4, 2, vec![16, 16]).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [2, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (z, _) = model.forward(x.clone());
+        let x_rec = model.inverse(z);
+        let diff: Vec<f32> = (x - x_rec).to_data().to_vec().unwrap();
+        let max_diff = diff.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+        assert!(max_diff < 1e-3, "max diff: {max_diff}");
+    }
+
+    #[test]
+    fn log_prob_shape() {
+        let device = Default::default();
+        let model = MafConfig::new(4, 2, vec![16, 16]).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [8, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let lp = model.log_prob(x);
+        assert_eq!(lp.dims(), [8]);
     }
 }

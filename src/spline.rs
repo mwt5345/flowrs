@@ -19,7 +19,14 @@ pub fn rqs_forward<B: Backend>(
     unnorm_derivs: Tensor<B, 3>,
     tail_bound: f32,
 ) -> (Tensor<B, 2>, Tensor<B, 2>) {
-    rqs_transform(inputs, unnorm_widths, unnorm_heights, unnorm_derivs, tail_bound, false)
+    rqs_transform(
+        inputs,
+        unnorm_widths,
+        unnorm_heights,
+        unnorm_derivs,
+        tail_bound,
+        false,
+    )
 }
 
 /// Rational Quadratic Spline inverse transform.
@@ -30,7 +37,14 @@ pub fn rqs_inverse<B: Backend>(
     unnorm_derivs: Tensor<B, 3>,
     tail_bound: f32,
 ) -> (Tensor<B, 2>, Tensor<B, 2>) {
-    rqs_transform(inputs, unnorm_widths, unnorm_heights, unnorm_derivs, tail_bound, true)
+    rqs_transform(
+        inputs,
+        unnorm_widths,
+        unnorm_heights,
+        unnorm_derivs,
+        tail_bound,
+        true,
+    )
 }
 
 fn rqs_transform<B: Backend>(
@@ -78,25 +92,29 @@ fn rqs_transform<B: Backend>(
 
     // Determine which bin each input falls into
     // Use the appropriate cumulative values depending on forward vs inverse
-    let cum_lookup = if inverse { cumheights.clone() } else { cumwidths.clone() };
+    let cum_lookup = if inverse {
+        cumheights.clone()
+    } else {
+        cumwidths.clone()
+    };
 
     // inputs: [B, D] -> [B, D, 1] for comparison
     let inputs_3d = inputs.clone().unsqueeze_dim(2); // [B, D, 1]
 
     // inside_mask: points inside [-tail_bound, tail_bound]
-    let inside_mask = inputs.clone().greater_equal(
-        Tensor::<B, 2>::ones([batch, d], &device).mul_scalar(-tail_bound),
-    ).bool_and(
-        inputs.clone().lower(
-            Tensor::<B, 2>::ones([batch, d], &device).mul_scalar(tail_bound),
-        ),
-    ); // [B, D] bool
+    let inside_mask = inputs
+        .clone()
+        .greater_equal(Tensor::<B, 2>::ones([batch, d], &device).mul_scalar(-tail_bound))
+        .bool_and(
+            inputs
+                .clone()
+                .lower(Tensor::<B, 2>::ones([batch, d], &device).mul_scalar(tail_bound)),
+        ); // [B, D] bool
 
     // Bin indices: count how many bin edges are <= input, subtract 1
     // Compare inputs [B, D, 1] >= cum_lookup [B, D, K+1] -> [B, D, K+1] bool
     let ge_mask = inputs_3d.greater_equal(cum_lookup); // [B, D, K+1]
-    let ge_int = Tensor::<B, 3>::zeros([batch, d, num_bins + 1], &device)
-        .mask_fill(ge_mask, 1.0); // [B, D, K+1]
+    let ge_int = Tensor::<B, 3>::zeros([batch, d, num_bins + 1], &device).mask_fill(ge_mask, 1.0); // [B, D, K+1]
     let bin_counts: Tensor<B, 2> = ge_int.sum_dim(2).reshape([batch, d]); // [B, D]
 
     // bin_idx = clamp(count - 1, 0, K-1)
@@ -104,29 +122,41 @@ fn rqs_transform<B: Backend>(
     let bin_idx: Tensor<B, 3, Int> = bin_idx_f.int().unsqueeze_dim(2); // [B, D, 1]
 
     // Gather per-bin parameters
-    let input_cumwidths: Tensor<B, 2> = cumwidths.clone().gather(2, bin_idx.clone()).reshape([batch, d]); // [B, D]
+    let input_cumwidths: Tensor<B, 2> = cumwidths
+        .clone()
+        .gather(2, bin_idx.clone())
+        .reshape([batch, d]); // [B, D]
     let bin_idx_p1: Tensor<B, 3, Int> = bin_idx.clone() + 1;
-    let input_cumwidths_p1: Tensor<B, 2> = cumwidths.gather(2, bin_idx_p1.clone()).reshape([batch, d]);
+    let input_cumwidths_p1: Tensor<B, 2> =
+        cumwidths.gather(2, bin_idx_p1.clone()).reshape([batch, d]);
     let input_bin_widths = input_cumwidths_p1 - input_cumwidths.clone();
 
-    let input_cumheights: Tensor<B, 2> = cumheights.clone().gather(2, bin_idx.clone()).reshape([batch, d]);
-    let input_cumheights_p1: Tensor<B, 2> = cumheights.gather(2, bin_idx_p1.clone()).reshape([batch, d]);
+    let input_cumheights: Tensor<B, 2> = cumheights
+        .clone()
+        .gather(2, bin_idx.clone())
+        .reshape([batch, d]);
+    let input_cumheights_p1: Tensor<B, 2> =
+        cumheights.gather(2, bin_idx_p1.clone()).reshape([batch, d]);
     let input_bin_heights = input_cumheights_p1 - input_cumheights.clone();
 
     let input_delta = input_bin_heights.clone() / input_bin_widths.clone(); // s_k
 
-    let input_derivs: Tensor<B, 2> = derivs.clone().gather(2, bin_idx.clone()).reshape([batch, d]); // d_k
+    let input_derivs: Tensor<B, 2> = derivs
+        .clone()
+        .gather(2, bin_idx.clone())
+        .reshape([batch, d]); // d_k
     let input_derivs_p1: Tensor<B, 2> = derivs.gather(2, bin_idx_p1).reshape([batch, d]); // d_{k+1}
 
     // Compute the spline
     let (outputs_inside, logdet_inside) = if inverse {
         // Inverse: given y, find x
-        let a = input_bin_heights.clone()
-            * (input_delta.clone() - input_derivs.clone())
-            + (inputs.clone() - input_cumheights.clone()) * (input_derivs_p1.clone() + input_derivs.clone() - input_delta.clone() * 2.0);
+        let a = input_bin_heights.clone() * (input_delta.clone() - input_derivs.clone())
+            + (inputs.clone() - input_cumheights.clone())
+                * (input_derivs_p1.clone() + input_derivs.clone() - input_delta.clone() * 2.0);
 
         let b = input_bin_heights.clone() * input_derivs.clone()
-            - (inputs.clone() - input_cumheights.clone()) * (input_derivs_p1.clone() + input_derivs.clone() - input_delta.clone() * 2.0);
+            - (inputs.clone() - input_cumheights.clone())
+                * (input_derivs_p1.clone() + input_derivs.clone() - input_delta.clone() * 2.0);
 
         let c = -input_delta.clone() * (inputs.clone() - input_cumheights.clone());
 
@@ -140,7 +170,8 @@ fn rqs_transform<B: Backend>(
         let one_m_theta = (-theta.clone()).add_scalar(1.0);
         let denom = input_delta.clone()
             + (input_derivs_p1.clone() + input_derivs.clone() - input_delta.clone() * 2.0)
-            * theta.clone() * one_m_theta.clone();
+                * theta.clone()
+                * one_m_theta.clone();
 
         let numer = input_delta.clone().powf_scalar(2.0)
             * (input_derivs_p1.clone() * theta.clone().powf_scalar(2.0)
@@ -162,7 +193,8 @@ fn rqs_transform<B: Backend>(
 
         let denom = input_delta.clone()
             + (input_derivs_p1.clone() + input_derivs.clone() - input_delta.clone() * 2.0)
-            * theta.clone() * one_m_theta.clone();
+                * theta.clone()
+                * one_m_theta.clone();
 
         let outputs = input_cumheights.clone() + numer / denom.clone();
 
@@ -180,8 +212,121 @@ fn rqs_transform<B: Backend>(
     // Apply linear tails: identity + logdet=0 outside [-tail_bound, tail_bound]
     let inside_mask_2d = inside_mask; // [B, D]
 
-    let outputs = inputs.clone().mask_where(inside_mask_2d.clone(), outputs_inside);
-    let logdet = Tensor::<B, 2>::zeros([batch, d], &device).mask_where(inside_mask_2d, logdet_inside);
+    let outputs = inputs
+        .clone()
+        .mask_where(inside_mask_2d.clone(), outputs_inside);
+    let logdet =
+        Tensor::<B, 2>::zeros([batch, d], &device).mask_where(inside_mask_2d, logdet_inside);
 
     (outputs, logdet)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn::backend::NdArray;
+
+    type B = NdArray;
+    const K: usize = 8;
+    const TAIL: f32 = 3.0;
+
+    #[test]
+    fn forward_inverse_roundtrip() {
+        let device = Default::default();
+        let x = Tensor::<B, 2>::random(
+            [8, 4],
+            burn::tensor::Distribution::Uniform(-2.5, 2.5),
+            &device,
+        );
+        let widths = Tensor::<B, 3>::random(
+            [8, 4, K],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let heights = Tensor::<B, 3>::random(
+            [8, 4, K],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let derivs = Tensor::<B, 3>::random(
+            [8, 4, K - 1],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (y, _) = rqs_forward(
+            x.clone(),
+            widths.clone(),
+            heights.clone(),
+            derivs.clone(),
+            TAIL,
+        );
+        let (x_rec, _) = rqs_inverse(y, widths, heights, derivs, TAIL);
+        let diff: Vec<f32> = (x - x_rec).to_data().to_vec().unwrap();
+        let max_diff = diff.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+        assert!(max_diff < 1e-3, "max diff: {max_diff}");
+    }
+
+    #[test]
+    fn identity_in_tails() {
+        let device = Default::default();
+        let x = Tensor::<B, 2>::from_floats(
+            TensorData::new(vec![4.0f32, -4.0, 5.0, -5.0], [1, 4]),
+            &device,
+        );
+        let widths = Tensor::<B, 3>::random(
+            [1, 4, K],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let heights = Tensor::<B, 3>::random(
+            [1, 4, K],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let derivs = Tensor::<B, 3>::random(
+            [1, 4, K - 1],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (y, logdet) = rqs_forward(x.clone(), widths, heights, derivs, TAIL);
+        let y_diff: Vec<f32> = (y - x).to_data().to_vec().unwrap();
+        let max_diff = y_diff.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+        assert!(
+            max_diff < 1e-6,
+            "tails should be identity, max diff: {max_diff}"
+        );
+        let logdet_data: Vec<f32> = logdet.to_data().to_vec().unwrap();
+        let max_logdet = logdet_data.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+        assert!(
+            max_logdet < 1e-6,
+            "tails should have zero log_det, max: {max_logdet}"
+        );
+    }
+
+    #[test]
+    fn log_det_shape() {
+        let device = Default::default();
+        let x = Tensor::<B, 2>::random(
+            [8, 4],
+            burn::tensor::Distribution::Uniform(-2.5, 2.5),
+            &device,
+        );
+        let widths = Tensor::<B, 3>::random(
+            [8, 4, K],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let heights = Tensor::<B, 3>::random(
+            [8, 4, K],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let derivs = Tensor::<B, 3>::random(
+            [8, 4, K - 1],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (_, logdet) = rqs_forward(x, widths, heights, derivs, TAIL);
+        assert_eq!(logdet.dims(), [8, 4]);
+    }
 }

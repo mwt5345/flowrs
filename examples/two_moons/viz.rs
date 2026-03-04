@@ -265,9 +265,7 @@ fn marching_squares(
             let left = (x, y + lerp(d00, d01)); // left edge
             let right = (x + 1.0, y + lerp(d10, d11)); // right edge
 
-            let add = |segs: &mut Vec<(f32, f32, f32, f32)>,
-                       a: (f32, f32),
-                       b: (f32, f32)| {
+            let add = |segs: &mut Vec<(f32, f32, f32, f32)>, a: (f32, f32), b: (f32, f32)| {
                 segs.push((a.0, a.1, b.0, b.1));
             };
 

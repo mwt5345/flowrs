@@ -1,7 +1,7 @@
-use burn::prelude::*;
 use crate::actnorm::{ActNorm, ActNormConfig};
 use crate::coupling::{AffineCoupling, AffineCouplingConfig};
 use crate::flow::standard_normal_log_prob;
+use burn::prelude::*;
 
 #[derive(Config, Debug)]
 pub struct RealNvpConfig {
@@ -74,5 +74,42 @@ impl<B: Backend> RealNvp<B> {
     pub fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1> {
         let (z, log_det) = self.forward(x);
         standard_normal_log_prob(z, log_det)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn::backend::NdArray;
+
+    type B = NdArray;
+
+    #[test]
+    fn forward_inverse_roundtrip() {
+        let device = Default::default();
+        let model = RealNvpConfig::new(4, 2, vec![16, 16]).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [2, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (z, _) = model.forward(x.clone());
+        let x_rec = model.inverse(z);
+        let diff: Vec<f32> = (x - x_rec).to_data().to_vec().unwrap();
+        let max_diff = diff.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+        assert!(max_diff < 1e-5, "max diff: {max_diff}");
+    }
+
+    #[test]
+    fn log_prob_shape() {
+        let device = Default::default();
+        let model = RealNvpConfig::new(4, 2, vec![16, 16]).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [8, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let lp = model.log_prob(x);
+        assert_eq!(lp.dims(), [8]);
     }
 }

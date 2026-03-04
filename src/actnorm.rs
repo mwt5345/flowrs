@@ -1,5 +1,5 @@
-use burn::prelude::*;
 use burn::module::Param;
+use burn::prelude::*;
 
 #[derive(Config, Debug)]
 pub struct ActNormConfig {
@@ -48,5 +48,42 @@ impl<B: Backend> ActNorm<B> {
         let shift = self.shift.val().unsqueeze_dim(0);
         let neg_log_scale = self.log_scale.val().neg().unsqueeze_dim(0);
         (y - shift) * neg_log_scale.exp()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn::backend::NdArray;
+
+    type B = NdArray;
+
+    #[test]
+    fn forward_inverse_roundtrip() {
+        let device = Default::default();
+        let model = ActNormConfig::new(4).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [8, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (y, _) = model.forward(x.clone());
+        let x_rec = model.inverse(y);
+        let diff: Vec<f32> = (x - x_rec).to_data().to_vec().unwrap();
+        let max_diff = diff.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+        assert!(max_diff < 1e-5, "max diff: {max_diff}");
+    }
+
+    #[test]
+    fn log_det_shape() {
+        let device = Default::default();
+        let model = ActNormConfig::new(4).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [8, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (_, log_det) = model.forward(x);
+        assert_eq!(log_det.dims(), [8]);
     }
 }

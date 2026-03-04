@@ -1,7 +1,7 @@
-use burn::prelude::*;
-use burn::module::Ignored;
 use crate::mlp::{Mlp, MlpConfig};
 use crate::spline;
+use burn::module::Ignored;
+use burn::prelude::*;
 
 // ──────────────────────────── Affine Coupling ────────────────────────────
 
@@ -18,8 +18,8 @@ impl AffineCouplingConfig {
         let d_identity = self.d_input / 2;
         let d_transform = self.d_input - d_identity;
 
-        let conditioner = MlpConfig::new(d_identity, d_transform * 2, self.hidden_sizes.clone())
-            .init(device);
+        let conditioner =
+            MlpConfig::new(d_identity, d_transform * 2, self.hidden_sizes.clone()).init(device);
 
         AffineCoupling {
             conditioner,
@@ -71,7 +71,10 @@ impl<B: Backend> AffineCoupling<B> {
         let (x_id, x_tr) = self.split(x);
 
         let params = self.conditioner.forward(x_id.clone()); // [B, 2*d_transform]
-        let log_scale = params.clone().narrow(1, 0, self.d_transform).clamp(-5.0, 5.0);
+        let log_scale = params
+            .clone()
+            .narrow(1, 0, self.d_transform)
+            .clamp(-5.0, 5.0);
         let shift = params.narrow(1, self.d_transform, self.d_transform);
 
         let y_tr = x_tr * log_scale.clone().exp() + shift;
@@ -85,7 +88,10 @@ impl<B: Backend> AffineCoupling<B> {
         let (y_id, y_tr) = self.split(y);
 
         let params = self.conditioner.forward(y_id.clone());
-        let log_scale = params.clone().narrow(1, 0, self.d_transform).clamp(-5.0, 5.0);
+        let log_scale = params
+            .clone()
+            .narrow(1, 0, self.d_transform)
+            .clamp(-5.0, 5.0);
         let shift = params.narrow(1, self.d_transform, self.d_transform);
 
         let x_tr = (y_tr - shift) * (-log_scale).exp();
@@ -115,8 +121,12 @@ impl SplineCouplingConfig {
 
         // Conditioner outputs: K widths + K heights + (K-1) derivatives per transformed dim
         let params_per_dim = 3 * self.num_bins - 1;
-        let conditioner = MlpConfig::new(d_identity, d_transform * params_per_dim, self.hidden_sizes.clone())
-            .init(device);
+        let conditioner = MlpConfig::new(
+            d_identity,
+            d_transform * params_per_dim,
+            self.hidden_sizes.clone(),
+        )
+        .init(device);
 
         SplineCoupling {
             conditioner,
@@ -186,7 +196,8 @@ impl<B: Backend> SplineCoupling<B> {
         let raw = self.conditioner.forward(x_id.clone());
         let (widths, heights, derivs) = self.parse_params(raw);
 
-        let (y_tr, logdet_2d) = spline::rqs_forward(x_tr, widths, heights, derivs, *self.tail_bound);
+        let (y_tr, logdet_2d) =
+            spline::rqs_forward(x_tr, widths, heights, derivs, *self.tail_bound);
         let log_det: Tensor<B, 1> = logdet_2d.sum_dim(1).squeeze(); // sum over D_tr
 
         (self.merge(x_id, y_tr), log_det)
@@ -202,5 +213,71 @@ impl<B: Backend> SplineCoupling<B> {
         let (x_tr, _) = spline::rqs_inverse(y_tr, widths, heights, derivs, *self.tail_bound);
 
         self.merge(y_id, x_tr)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn::backend::NdArray;
+
+    type B = NdArray;
+
+    #[test]
+    fn affine_forward_inverse_roundtrip() {
+        let device = Default::default();
+        let model = AffineCouplingConfig::new(4, vec![16, 16]).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [8, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (y, _) = model.forward(x.clone());
+        let x_rec = model.inverse(y);
+        let diff: Vec<f32> = (x - x_rec).to_data().to_vec().unwrap();
+        let max_diff = diff.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+        assert!(max_diff < 1e-5, "max diff: {max_diff}");
+    }
+
+    #[test]
+    fn affine_log_det_shape() {
+        let device = Default::default();
+        let model = AffineCouplingConfig::new(4, vec![16, 16]).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [8, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (_, log_det) = model.forward(x);
+        assert_eq!(log_det.dims(), [8]);
+    }
+
+    #[test]
+    fn spline_forward_inverse_roundtrip() {
+        let device = Default::default();
+        let model = SplineCouplingConfig::new(4, vec![16, 16]).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [8, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (y, _) = model.forward(x.clone());
+        let x_rec = model.inverse(y);
+        let diff: Vec<f32> = (x - x_rec).to_data().to_vec().unwrap();
+        let max_diff = diff.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+        assert!(max_diff < 1e-3, "max diff: {max_diff}");
+    }
+
+    #[test]
+    fn spline_log_det_shape() {
+        let device = Default::default();
+        let model = SplineCouplingConfig::new(4, vec![16, 16]).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [8, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (_, log_det) = model.forward(x);
+        assert_eq!(log_det.dims(), [8]);
     }
 }

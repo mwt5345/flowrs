@@ -1,5 +1,5 @@
-use burn::prelude::*;
 use burn::nn::{Linear, LinearConfig};
+use burn::prelude::*;
 use burn::tensor::activation;
 
 #[derive(Config, Debug)]
@@ -40,5 +40,26 @@ impl<B: Backend> Mlp<B> {
             }
         }
         h
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn::backend::NdArray;
+
+    type B = NdArray;
+
+    #[test]
+    fn output_shape() {
+        let device = Default::default();
+        let model = MlpConfig::new(4, 8, vec![16, 16]).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [8, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let y = model.forward(x);
+        assert_eq!(y.dims(), [8, 8]);
     }
 }

@@ -1,6 +1,6 @@
+use crate::masked_linear::MaskedLinear;
 use burn::prelude::*;
 use burn::tensor::activation;
-use crate::masked_linear::MaskedLinear;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -96,5 +96,61 @@ impl<B: Backend> Made<B> {
         let log_sigma = h.narrow(1, d, d);
 
         (mu, log_sigma)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn::backend::NdArray;
+
+    type B = NdArray;
+
+    #[test]
+    fn output_shapes() {
+        let device = Default::default();
+        let model = MadeConfig::new(4, vec![16, 16]).init::<B>(&device);
+        let x = Tensor::<B, 2>::random(
+            [8, 4],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        let (mu, log_sigma) = model.forward(x);
+        assert_eq!(mu.dims(), [8, 4]);
+        assert_eq!(log_sigma.dims(), [8, 4]);
+    }
+
+    #[test]
+    fn autoregressive_property() {
+        let device = Default::default();
+        let d = 4usize;
+        let model = MadeConfig::new(d, vec![16, 16]).init::<B>(&device);
+        let x1 = Tensor::<B, 2>::random(
+            [2, d],
+            burn::tensor::Distribution::Normal(0.0, 1.0),
+            &device,
+        );
+        // Change only the last dimension
+        let mut x2_data: Vec<f32> = x1.to_data().to_vec().unwrap();
+        for b in 0..2 {
+            x2_data[b * d + (d - 1)] += 1.0;
+        }
+        let x2 = Tensor::<B, 2>::from_floats(TensorData::new(x2_data, [2, d]), &device);
+        let (mu1, ls1) = model.forward(x1);
+        let (mu2, ls2) = model.forward(x2);
+
+        // Changing x_{d-1} should not affect any output since mu_j depends on x_0..x_{j-1}
+        let mu_diff: Vec<f32> = (mu1 - mu2).to_data().to_vec().unwrap();
+        let ls_diff: Vec<f32> = (ls1 - ls2).to_data().to_vec().unwrap();
+        let max_mu_diff = mu_diff.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+        let max_ls_diff = ls_diff.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+        assert!(
+            max_mu_diff < 1e-6,
+            "mu changed when modifying x_{{d-1}}: max diff = {max_mu_diff}"
+        );
+        assert!(
+            max_ls_diff < 1e-6,
+            "log_sigma changed when modifying x_{{d-1}}: max diff = {max_ls_diff}"
+        );
     }
 }
