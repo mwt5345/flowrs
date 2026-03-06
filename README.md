@@ -11,6 +11,8 @@
   <a href="#flow-types">Flow Types</a> &middot;
   <a href="#installation">Installation</a> &middot;
   <a href="#quick-start">Quick Start</a> &middot;
+  <a href="#conditional-flows">Conditional Flows</a> &middot;
+  <a href="#python-bindings">Python Bindings</a> &middot;
   <a href="#examples">Examples</a>
 </p>
 
@@ -136,6 +138,83 @@ for epoch in 1..=500 {
 }
 ```
 
+## Conditional Flows
+
+All flow types support conditional density estimation $p(x \mid \text{context})$ via an optional context vector. This is useful for learning distributions that depend on external parameters (e.g., physical parameters, class labels).
+
+```rust
+use flowrs::MafConfig;
+
+// 3D target, 5D context vector, 4 flow layers
+let model: flowrs::Maf<B> = MafConfig::new(3, 4, vec![64, 64])
+    .with_d_context(Some(5))
+    .with_seed(42)
+    .init::<B>(&device);
+
+let x: Tensor<B, 2> = /* [batch, 3] target data */;
+let ctx: Tensor<B, 2> = /* [batch, 5] conditioning variables */;
+
+// Conditional log-likelihood
+let log_p = model.log_prob_conditional(x.clone(), Some(ctx.clone()));
+
+// Conditional forward / inverse
+let (z, log_det) = model.forward_conditional(x, Some(ctx.clone()));
+let x_reconstructed = model.inverse_conditional(z, Some(ctx));
+```
+
+Context is injected additively at each hidden layer of the MADE network. When no context is provided (`None`), the model behaves as an unconditional flow — existing code is fully backward compatible.
+
+## Python Bindings
+
+**pyflowrs** provides Python bindings via [PyO3](https://pyo3.rs) and [maturin](https://www.maturin.rs/), giving you access to all flow architectures from Python/Jupyter with an `nflows`-style API.
+
+### Installation
+
+```bash
+cd pyflowrs
+pip install maturin
+maturin develop --release
+```
+
+### Usage
+
+```python
+import numpy as np
+import pyflowrs
+
+# Unconditional flow
+flow = pyflowrs.MAF(d_input=2, num_flows=6, hidden_sizes=[128, 128])
+history = flow.fit(X_train, num_steps=10000, batch_size=64, lr=3e-4)
+
+log_p = flow.log_prob(X_test)         # exact log-likelihood
+samples = flow.sample(1000)           # generate samples
+```
+
+### Conditional flows
+
+```python
+# Conditional: p(x | context)
+flow = pyflowrs.MAF(d_input=3, num_flows=4, hidden_sizes=[64, 64], d_context=5)
+
+history = flow.fit(
+    X_train, y=context_train,
+    x_val=X_val, y_val=context_val,
+    num_steps=20000,
+    batch_size=64,
+    lr=3e-4,
+    noise_std=0.1,       # input noise regularization
+    weight_decay=1e-3,   # L2 regularization
+    patience=5000,
+)
+
+# Condition on a specific context
+ctx = np.array([[0.96, 0.67, 0.022, 0.31, 0.81]], dtype=np.float32)
+samples = flow.sample(5000, context=ctx)
+log_p = flow.log_prob(X_test, context=ctx_test)
+```
+
+All three architectures (`MAF`, `NSF`, `RealNVP`) share the same Python API.
+
 ## Examples
 
 ### Two Moons CLI
@@ -199,8 +278,8 @@ Benchmarks forward, inverse, and log_prob for all three architectures, plus batc
 ```
 src/
 ├── lib.rs             # Public API and re-exports
-├── maf.rs             # Masked Autoregressive Flow
-├── made.rs            # MADE autoregressive network
+├── maf.rs             # Masked Autoregressive Flow (+ conditional)
+├── made.rs            # MADE autoregressive network (+ context injection)
 ├── masked_linear.rs   # Masked linear layer
 ├── nsf.rs             # Neural Spline Flow (composite)
 ├── realnvp.rs         # RealNVP (composite)
@@ -210,6 +289,10 @@ src/
 ├── lu_linear.rs       # LU-decomposed invertible linear
 ├── mlp.rs             # MLP conditioner network
 └── flow.rs            # Shared utilities
+pyflowrs/
+├── src/lib.rs         # PyO3 bindings (MAF, NSF, RealNVP)
+├── Cargo.toml
+└── pyproject.toml     # maturin build config
 ```
 
 ## License
