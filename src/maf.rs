@@ -20,6 +20,8 @@ pub struct MafConfig {
     /// Random seed for reproducible mask generation.
     #[config(default = 42)]
     pub seed: u64,
+    /// Optional context dimensionality for conditional flows.
+    pub d_context: Option<usize>,
 }
 
 impl MafConfig {
@@ -33,7 +35,9 @@ impl MafConfig {
         for i in 0..self.num_flows {
             let flow_seed = rng.r#gen::<u64>();
             let made_config =
-                MadeConfig::new(self.d_input, self.hidden_sizes.clone()).with_seed(flow_seed);
+                MadeConfig::new(self.d_input, self.hidden_sizes.clone())
+                    .with_seed(flow_seed)
+                    .with_d_context(self.d_context);
             flows.push(made_config.init(device));
 
             if i % 2 == 0 {
@@ -99,24 +103,29 @@ impl<B: Backend> Maf<B> {
     /// Returns `(z, log_det_jacobian)` where `log_det_jacobian` has shape `[batch]`.
     #[must_use]
     pub fn forward(&self, x: Tensor<B, 2>) -> (Tensor<B, 2>, Tensor<B, 1>) {
+        self.forward_conditional(x, None)
+    }
+
+    /// Conditional forward: x -> z with optional context.
+    #[must_use]
+    pub fn forward_conditional(
+        &self,
+        x: Tensor<B, 2>,
+        context: Option<Tensor<B, 2>>,
+    ) -> (Tensor<B, 2>, Tensor<B, 1>) {
         let batch = x.dims()[0];
         let device = x.device();
         let mut z = x;
         let mut total_log_det = Tensor::<B, 1>::zeros([batch], &device);
 
         for (i, flow) in self.flows.iter().enumerate() {
-            // Apply permutation
             z = self.permute_cols(z, &self.permutations.0[i]);
 
-            let (mu, log_sigma) = flow.forward(z.clone());
-
-            // Clamp log_sigma for numerical stability
+            let (mu, log_sigma) = flow.forward_conditional(z.clone(), context.clone());
             let log_sigma = log_sigma.clamp(-5.0, 5.0);
 
-            // z_i = (x_i - mu_i) * exp(-log_sigma_i)
             z = (z - mu) * (-log_sigma.clone()).exp();
 
-            // log_det = -sum(log_sigma) per sample
             let log_det: Tensor<B, 1> = log_sigma.sum_dim(1).reshape([batch]);
             total_log_det = total_log_det - log_det;
         }
@@ -127,29 +136,34 @@ impl<B: Backend> Maf<B> {
     /// Inverse: z -> x (sequential, for sampling).
     #[must_use]
     pub fn inverse(&self, z: Tensor<B, 2>) -> Tensor<B, 2> {
+        self.inverse_conditional(z, None)
+    }
+
+    /// Conditional inverse: z -> x with optional context.
+    #[must_use]
+    pub fn inverse_conditional(
+        &self,
+        z: Tensor<B, 2>,
+        context: Option<Tensor<B, 2>>,
+    ) -> Tensor<B, 2> {
         let d = self.d_input;
         let batch = z.dims()[0];
         let device = z.device();
         let mut x = z;
 
-        // Process flows in reverse order
         for i in (0..self.flows.len()).rev() {
             let flow = &self.flows[i];
-
-            // Dimension-by-dimension sequential reconstruction
             let mut out = Tensor::<B, 2>::zeros([batch, d], &device);
 
             for dim in 0..d {
-                let (mu, log_sigma) = flow.forward(out.clone());
+                let (mu, log_sigma) = flow.forward_conditional(out.clone(), context.clone());
                 let log_sigma = log_sigma.clamp(-5.0, 5.0);
 
-                // x_dim = z_dim * exp(log_sigma_dim) + mu_dim
                 let mu_d = mu.narrow(1, dim, 1);
                 let ls_d = log_sigma.narrow(1, dim, 1);
                 let x_d = x.clone().narrow(1, dim, 1);
                 let out_d = x_d * ls_d.exp() + mu_d;
 
-                // Slice-assign: build new tensor with this column updated
                 if dim == 0 {
                     if d > 1 {
                         out = Tensor::cat(vec![out_d, out.narrow(1, 1, d - 1)], 1);
@@ -171,8 +185,6 @@ impl<B: Backend> Maf<B> {
             }
 
             x = out;
-
-            // Undo permutation
             x = self.inv_permute_cols(x, &self.permutations.0[i]);
         }
 
@@ -183,6 +195,17 @@ impl<B: Backend> Maf<B> {
     #[must_use]
     pub fn log_prob(&self, x: Tensor<B, 2>) -> Tensor<B, 1> {
         let (z, log_det) = self.forward(x);
+        crate::flow::standard_normal_log_prob(z, log_det)
+    }
+
+    /// Conditional log-probability: `log p(x | context)`.
+    #[must_use]
+    pub fn log_prob_conditional(
+        &self,
+        x: Tensor<B, 2>,
+        context: Tensor<B, 2>,
+    ) -> Tensor<B, 1> {
+        let (z, log_det) = self.forward_conditional(x, Some(context));
         crate::flow::standard_normal_log_prob(z, log_det)
     }
 }

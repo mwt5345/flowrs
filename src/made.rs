@@ -1,4 +1,5 @@
 use crate::masked_linear::MaskedLinear;
+use burn::nn::{Linear, LinearConfig};
 use burn::prelude::*;
 use burn::tensor::activation;
 use rand::rngs::StdRng;
@@ -14,6 +15,8 @@ pub struct MadeConfig {
     /// Random seed for mask generation.
     #[config(default = 42)]
     pub seed: u64,
+    /// Optional context dimensionality for conditional flows.
+    pub d_context: Option<usize>,
 }
 
 impl MadeConfig {
@@ -74,7 +77,22 @@ impl MadeConfig {
             layers.push(MaskedLinear::new(d_in, d_out, mask, device));
         }
 
-        Made { layers, d_input: d }
+        // Context projection layers: one per hidden layer
+        let context_layers = if let Some(d_ctx) = self.d_context {
+            let mut ctx_layers = Vec::new();
+            for &h in &self.hidden_sizes {
+                ctx_layers.push(LinearConfig::new(d_ctx, h).init(device));
+            }
+            ctx_layers
+        } else {
+            Vec::new()
+        };
+
+        Made {
+            layers,
+            context_layers,
+            d_input: d,
+        }
     }
 }
 
@@ -86,6 +104,7 @@ impl MadeConfig {
 #[derive(Module, Debug)]
 pub struct Made<B: Backend> {
     pub(crate) layers: Vec<MaskedLinear<B>>,
+    pub(crate) context_layers: Vec<Linear<B>>,
     pub(crate) d_input: usize,
 }
 
@@ -93,13 +112,32 @@ impl<B: Backend> Made<B> {
     /// Forward pass: returns `(mu, log_sigma)` each with shape `[batch, d]`.
     #[must_use]
     pub fn forward(&self, x: Tensor<B, 2>) -> (Tensor<B, 2>, Tensor<B, 2>) {
+        self.forward_conditional(x, None)
+    }
+
+    /// Conditional forward pass: returns `(mu, log_sigma)` each with shape `[batch, d]`.
+    ///
+    /// When `context` is provided, it is projected and added to each hidden layer.
+    #[must_use]
+    pub fn forward_conditional(
+        &self,
+        x: Tensor<B, 2>,
+        context: Option<Tensor<B, 2>>,
+    ) -> (Tensor<B, 2>, Tensor<B, 2>) {
         let num_layers = self.layers.len();
         let mut h = x;
+        let mut ctx_idx = 0;
 
         for (i, layer) in self.layers.iter().enumerate() {
             h = layer.forward(h);
-            // Apply ReLU to all but the last layer
+            // Add context projection at hidden layers (all but last)
             if i < num_layers - 1 {
+                if let Some(ref ctx) = context {
+                    if ctx_idx < self.context_layers.len() {
+                        h = h + self.context_layers[ctx_idx].forward(ctx.clone());
+                        ctx_idx += 1;
+                    }
+                }
                 h = activation::relu(h);
             }
         }

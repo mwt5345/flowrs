@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "pyflowrs"]
+
 [package]
 name = "flowrs"
 version = "0.1.0"

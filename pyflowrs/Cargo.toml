@@ -1,0 +1,15 @@
+[package]
+name = "pyflowrs"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "pyflowrs"
+crate-type = ["cdylib"]
+
+[dependencies]
+flowrs = { path = "..", default-features = false, features = ["ndarray"] }
+burn = { version = "0.20", features = ["autodiff", "ndarray"] }
+pyo3 = { version = "0.24", features = ["extension-module"] }
+numpy = "0.24"
+rand = "0.8"
