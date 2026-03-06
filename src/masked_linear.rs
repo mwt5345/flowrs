@@ -25,6 +25,25 @@ impl<B: Backend> MaskedLinear<B> {
         }
     }
 
+    /// Create with near-zero initialization (for residual block outputs).
+    pub(crate) fn new_zero_init(d_in: usize, d_out: usize, mask: Tensor<B, 2>, device: &B::Device) -> Self {
+        let weight = Tensor::random(
+            [d_in, d_out],
+            burn::tensor::Distribution::Uniform(-1e-3, 1e-3),
+            device,
+        );
+        let bias = Tensor::random(
+            [d_out],
+            burn::tensor::Distribution::Uniform(-1e-3, 1e-3),
+            device,
+        );
+        Self {
+            weight: Param::from_tensor(weight),
+            bias: Param::from_tensor(bias),
+            mask,
+        }
+    }
+
     pub(crate) fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2> {
         let masked_weight = self.weight.val().mul(self.mask.clone());
         input.matmul(masked_weight) + self.bias.val().unsqueeze_dim(0)
