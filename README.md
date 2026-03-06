@@ -229,9 +229,10 @@ FLOW_MODEL=all cargo run --release --example two_moons
 FLOW_MODEL=nsf cargo run --release --example two_moons
 ```
 
-### Jupyter Notebook
+### Jupyter Notebooks
 
-An interactive [evcxr](https://github.com/evcxr/evcxr) Jupyter notebook is provided in [`notebooks/two_moons_nsf.ipynb`](notebooks/two_moons_nsf.ipynb), demonstrating NSF training with inline plots via [plotpy](https://github.com/cpmech/plotpy).
+- **[`notebooks/two_moons_python.ipynb`](notebooks/two_moons_python.ipynb)** — Python notebook using pyflowrs: trains all three flow types on two-moons and compares head-to-head against nflows (samples, density heatmaps, timing bar charts)
+- **[`notebooks/two_moons_nsf.ipynb`](notebooks/two_moons_nsf.ipynb)** — Rust [evcxr](https://github.com/evcxr/evcxr) notebook demonstrating NSF training with inline plots via [plotpy](https://github.com/cpmech/plotpy)
 
 ## Benchmarks
 
